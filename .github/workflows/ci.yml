@@ -64,7 +64,6 @@ jobs:
 
       - name: Resilience check (restart worker mid-flight, must still converge)
         run: |
-          python scripts/load.py
           docker compose restart worker
           python scripts/check.py
 

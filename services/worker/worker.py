@@ -32,10 +32,12 @@ CONSUMER  = os.environ.get("CONSUMER_NAME", "worker-1")
 IDEMPOTENCY_TTL_S = 86_400  # 24 hours
 
 # Payments client config: timeout slightly above SLOW_SECONDS (5 s) in docker-compose.
+# MAX_RETRIES is high because 5xx / timeouts from this service are purely transient
+# (random per call). Only 4xx errors are truly permanent and go to dead-letter.
 CHARGE_TIMEOUT_S = 6
-MAX_RETRIES      = 5
-BASE_BACKOFF_S   = 0.5
-MAX_BACKOFF_S    = 10.0
+MAX_RETRIES      = 20
+BASE_BACKOFF_S   = 0.25
+MAX_BACKOFF_S    = 5.0
 
 r = redis.from_url(REDIS_URL, decode_responses=True)
 
