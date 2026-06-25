@@ -86,7 +86,7 @@ jobs:
         run: docker build -t worker:ci services/worker
 
       - name: Scan worker image for CVEs (Trivy)
-        uses: aquasecurity/trivy-action@0.30.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: worker:ci
           format: table
