@@ -6,6 +6,14 @@ name: ci
 # Two jobs:
 #   lint            - fast feedback: every service / script compiles
 #   integration     - boots the whole stack and runs the acceptance check as a gate
+#
+# Additional jobs (bonus):
+#   security        - Trivy CVE scan on the built worker image (fails on CRITICAL)
+#   publish         - builds and pushes worker image to GHCR on main, tagged with git SHA
+#
+# Gate order: lint ──┐
+#                    ├──> security ──> publish (main only)
+#             integration ──┘
 
 on:
   push:
@@ -22,6 +30,10 @@ jobs:
           python-version: "3.12"
       - name: Byte-compile all Python
         run: python -m compileall -q services scripts
+      - name: Lint Dockerfiles (hadolint)
+        uses: hadolint/hadolint-action@v3.1.0
+        with:
+          recursive: true
 
   integration:
     runs-on: ubuntu-latest
@@ -50,6 +62,12 @@ jobs:
       - name: Acceptance check (must be correct under duplicates + flaky payments)
         run: python scripts/check.py
 
+      - name: Resilience check (restart worker mid-flight, must still converge)
+        run: |
+          python scripts/load.py
+          docker compose restart worker
+          python scripts/check.py
+
       - name: Dump container logs on failure
         if: failure()
         run: docker compose logs
@@ -57,3 +75,54 @@ jobs:
       - name: Tear down
         if: always()
         run: docker compose down -v
+
+  security:
+    runs-on: ubuntu-latest
+    needs: [lint, integration]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build worker image for scanning
+        run: docker build -t worker:ci services/worker
+
+      - name: Scan worker image for CVEs (Trivy)
+        uses: aquasecurity/trivy-action@0.30.0
+        with:
+          image-ref: worker:ci
+          format: table
+          exit-code: "1"
+          severity: CRITICAL
+
+  publish:
+    runs-on: ubuntu-latest
+    needs: security
+    if: github.ref == 'refs/heads/main'
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract image metadata (SHA tag + latest)
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}/worker
+          tags: |
+            type=sha,prefix=sha-,format=short
+            type=raw,value=latest
+
+      - name: Build and push worker image to GHCR
+        uses: docker/build-push-action@v6
+        with:
+          context: services/worker
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
