@@ -112,4 +112,16 @@ detection and a GUI for prod approvals.
    Fix: `XADD MAXLEN ~` trimming and Redis Cluster sharding.
 
 ## Consequences
-_To be completed after implementation._
+
+### What's better now
+- Worker restarts no longer lose messages — `XAUTOCLAIM` reclaims every unacked entry.
+- Ledger is exactly correct under duplicates and retries — `key exists ↔ ledger incremented` is a `MULTI/EXEC` invariant; overcharge is structurally impossible.
+- Transient failures self-heal — 20× retry absorbs the 40 % effective failure rate; one 4xx poison message is isolated to dead-letter without stalling the group.
+- CI is a real gate — Dockerfile lint, CVE scan, and a SHA-tagged GHCR image on every green `main` merge.
+
+### Still weak / next with more time
+- **Dead-letter is a black hole** — no alerting, no replay path; operator must query Redis directly.
+- **No observability** — consumer lag, retry rate, and dead-letter count are invisible; need a Prometheus `/metrics` endpoint on the worker.
+- **Redis has no durability** — AOF is off by default; a crash wipes the stream and all idempotency keys.
+- **No concurrency in the worker** — a single 6 s hang blocks all other orders; asyncio or a thread pool needed before adding replicas.
+- **No circuit breaker** — sustained payment degradation keeps firing requests instead of shedding load.
