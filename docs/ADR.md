@@ -33,12 +33,20 @@ prevents a crash between SET NX and the ledger write from silently losing an ord
 on restart.
 
 ### Failure handling
-All calls to `/charge` carry a per-request timeout. On `5xx` or timeout the worker
-retries with exponential backoff and jitter. Transient failures (network blip, 500)
-are retried; a message is classified as permanently failed only after exceeding the
-max retry budget. Poison messages are moved to a `orders:dead-letter` stream so one
-bad message cannot stall the consumer group. The processing loop continues with the
-next pending message regardless.
+All calls to `/charge` carry a per-request timeout (`CHARGE_TIMEOUT_S=6`, above the
+service's `SLOW_SECONDS=5`). Failures are classified by type:
+
+- **Transient (5xx, timeout)** — retried with exponential backoff and jitter
+  (`BASE_BACKOFF_S=0.25`, `MAX_BACKOFF_S=5`). `MAX_RETRIES=20` because the payments
+  service failures are stateless and random (30 % 5xx, 10 % hang, independent per
+  call). There is no such thing as a permanently failed order from this service — every
+  call has a fresh chance of success. Dead-lettering after only a few retries would
+  silently drop retrievable work. P(all 20 attempts fail) ≈ 0.0001 % per order.
+- **Permanent (4xx)** — dead-lettered immediately; a malformed request will not
+  fix itself on retry.
+
+Poison messages are written to `orders:dead-letter` and ACKed so they leave the PEL.
+The processing loop continues with the next message regardless.
 
 ### CI/CD pipeline hardening
 Three jobs added to `.github/workflows/ci.yml`, chained so each gates the next:
